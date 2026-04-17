@@ -1,10 +1,11 @@
 from copy import deepcopy
 from dataclasses import dataclass, field
 from functools import partial
-from typing import List
+from typing import List, Optional
 
 import torch
 import torch.nn.functional as F
+from megatron.core.enums import Fp8Recipe
 from megatron.core.transformer import TransformerConfig
 
 
@@ -20,6 +21,24 @@ class Qwen3VLTransformerConfig(TransformerConfig):
 
     apply_rotary_pos_emb_in_fp32: bool = False
     deepstack_visual_indexes: List[int] = field(default_factory=lambda: [8, 16, 24])
+    
+    # mRoPE configuration for Qwen3-VL
+    mrope_section: List[int] = field(default_factory=lambda: [24, 20, 20])
+    apply_rope_fusion: bool = False
+    
+    # Token IDs for multimodal processing
+    image_token_id: int = 151655
+    video_token_id: int = 151656
+    vision_start_token_id: int = 151652
+    
+    # Context parallelism and vision model configuration
+    vision_dp_when_cp: bool = False
+    use_hf_vision_model: bool = False
+    
+    # CUDA graph optimization settings
+    enable_cuda_graph: bool = False
+    fp8: bool = False
+    fp8_recipe: Optional[Fp8Recipe] = None
 
 
 def get_vision_model_config(config: Qwen3VLTransformerConfig, hf_config):

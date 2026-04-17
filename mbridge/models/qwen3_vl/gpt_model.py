@@ -1,6 +1,7 @@
 from typing import Literal, Optional
 
 import torch
+from megatron.core import parallel_state
 from megatron.core.inference.contexts import BaseInferenceContext
 from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.packed_seq_params import PackedSeqParams
@@ -60,12 +61,16 @@ class Qwen3VLGPTModel(GPTModel):
         )
 
         # rebuild rope
+        cp_group = None
+        if parallel_state.get_context_parallel_world_size() > 1:
+            cp_group = parallel_state.get_context_parallel_group()
         self.rotary_pos_emb = Qwen3VLMultimodalRotaryEmbedding(
             kv_channels=self.config.kv_channels,
             rotary_percent=rotary_percent,
             rotary_interleaved=self.config.rotary_interleaved,
             seq_len_interpolation_factor=seq_len_interpolation_factor,
             rotary_base=rotary_base,
+            cp_group=cp_group,
         )
         self.mrope_section = self.config.mrope_section
         assert (

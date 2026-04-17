@@ -138,7 +138,7 @@ class Qwen3VLVisionPatchMerger(MegatronModule):
             input_is_parallel=True,
             skip_bias_add=False,
             is_expert=False,
-            tp_comm_buffer_name="patch_fc1",
+            tp_comm_buffer_name="patch_fc2",
             tp_group=tp_group,
         )
 

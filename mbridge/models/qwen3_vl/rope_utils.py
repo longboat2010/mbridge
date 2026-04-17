@@ -56,6 +56,7 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
             for longer sequences. The value must be a float larger than 1.0. Defaults to None
         rotary_base (int, optional): Base period for rotary position embeddings. Defaults to
             10000.
+        cp_group (optional): Context parallel process group. Defaults to None.
     """
 
     def __init__(
@@ -65,6 +66,7 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
         rotary_interleaved: bool = False,
         seq_len_interpolation_factor: Optional[float] = None,
         rotary_base: int = 10000,
+        cp_group=None,
     ) -> None:
         super().__init__()
 
@@ -85,6 +87,7 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
             )
         )
         self.is_thd_format = False  # if is thd format, we do not need to split the rotary_pos_emb along CP
+        self.cp_group = cp_group
 
     def apply_interleaved_mrope(self, freqs, mrope_section):
         """Apply interleaved MRoPE to 3D rotary embeddings.
@@ -104,7 +107,7 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
         return freqs_t
 
     def forward(
-        self, position_ids: torch.Tensor, mrope_section: List[int], **kwargs
+        self, position_ids: torch.Tensor, mrope_section: List[int], packed_seq_params=None, **kwargs
     ) -> Tensor:
         """Forward pass of multimodal RoPE embedding.
 
@@ -112,6 +115,7 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
             position_ids (torch.Tensor): A postion_id tensor with shape [3, batchsize, seqlens]
             mrope_section (list[int]): Multimodal rope section is for channel dimension of temporal,
                 height and width in rope calculation.
+            packed_seq_params (PackedSeqParams, optional): Parameters for packed sequence processing.
             **kwargs: Additional keyword arguments (ignored, for Megatron Core compatibility).
 
         Returns:
@@ -138,11 +142,12 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
         if (
             parallel_state.get_context_parallel_world_size() > 1
             and not self.is_thd_format
+            and packed_seq_params is None
         ):
             # slice rotary_pos_emb along sequence dimension and select the parition of the current
             # CP rank
             emb = get_pos_emb_on_this_cp_rank(
-                emb, 0, parallel_state.get_context_parallel_group()
+                emb, 0, self.cp_group or parallel_state.get_context_parallel_group()
             )
         return emb
 
@@ -157,8 +162,24 @@ def get_rope_index(
     image_grid_thw: Optional[torch.LongTensor] = None,
     video_grid_thw: Optional[torch.LongTensor] = None,
     attention_mask: Optional[torch.Tensor] = None,
+    packed_seq_params=None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Different from the original implementation, Qwen3VL use timestamps rather than absolute time position ids."""
+    """Different from the original implementation, Qwen3VL use timestamps rather than absolute time position ids.
+    
+    Args:
+        spatial_merge_size (int): Spatial merge size for vision tokens.
+        image_token_id (int): Token ID for images.
+        video_token_id (int): Token ID for videos.
+        vision_start_token_id (int): Token ID for vision start.
+        input_ids (Optional[torch.LongTensor]): Input token IDs.
+        image_grid_thw (Optional[torch.LongTensor]): Image grid dimensions (t, h, w).
+        video_grid_thw (Optional[torch.LongTensor]): Video grid dimensions (t, h, w).
+        attention_mask (Optional[torch.Tensor]): Attention mask.
+        packed_seq_params: Parameters for packed sequence processing (unused, for compatibility).
+    
+    Returns:
+        tuple[torch.Tensor, torch.Tensor]: Position IDs and mRoPE position deltas.
+    """
 
     # Since we use timestamps to seperate videos, like <t1> <vision_start> <frame1> <vision_end> <t2> <vision_start> <frame2> <vision_end>, the video_grid_thw should also be split
     if video_grid_thw is not None:
