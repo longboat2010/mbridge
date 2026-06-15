@@ -136,6 +136,21 @@ class LoRAGroupedLinear(AdapterWrapper):
 class LoRATopKRouter(AdapterWrapper):
     """Adapter wrapper that applies LoRA to router gating logits."""
 
+    def __init__(self, to_wrap: nn.Module, adapter: nn.Module) -> None:
+        super().__init__(to_wrap, adapter)
+        # Mirror base router weight behavior (router.py line 84):
+        #   setattr(self.weight, 'sequence_parallel', self.config.sequence_parallel)
+        # The router adapter skips the SP gather for efficiency (each TP rank
+        # only routes its local seq/TP tokens).  When SP is enabled, the
+        # adapter's ColumnParallelLinear weights receive gradients from local
+        # tokens only.  Mark them so finalize_model_grads will SUM-allreduce
+        # across TP ranks, producing the correct full gradient.
+        seq_parallel = to_wrap.config.sequence_parallel
+        for sub in (adapter,) if not isinstance(adapter, nn.ModuleList) else adapter:
+            for p in sub.parameters():
+                if p.requires_grad:
+                    setattr(p, "sequence_parallel", seq_parallel)
+
     def forward(self, x: torch.Tensor, *args: Any, **kwargs: Any):
         """Forward pass that adds LoRA delta to router logits before routing."""
         self.to_wrap._maintain_float32_expert_bias()
